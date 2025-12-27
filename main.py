@@ -7,8 +7,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, Response, FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
 import PyPDF2
 import google.genai as genai
@@ -63,33 +62,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files
-import os
-# Determine the directory for static files
-# On Render, the build process might place frontend assets in a specific location
-# For local development, it's typically in ./static
-# For Render, it might be at the root, or within a 'dist' folder if a separate frontend build step is used
-
-# Assuming 'static' is the folder containing the index.html and assets
-# If deployed, the static files might be at the root level alongside the backend code
-# Check if the 'static' directory exists in the current working directory
-current_dir = os.path.dirname(os.path.abspath(__file__))
-static_dir = os.path.join(current_dir, "static")
-
-if not os.path.exists(static_dir):
-    # Fallback for Render deployment where static files might be at the root
-    # or if a separate build step moves them
-    static_dir = current_dir # Adjust this if your build puts them elsewhere, e.g., os.path.join(current_dir, "dist")
-
-if os.path.exists(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
 @app.get("/")
-async def serve_index():
-    index_path = os.path.join(static_dir, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path, media_type="text/html")
-    raise HTTPException(status_code=404, detail="index.html not found")
+async def read_root():
+    return RedirectResponse(url="/docs")
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
+
 
 # API Key Pool Management
 def get_gemini_clients():
@@ -927,10 +908,6 @@ async def disconnect_drive(user: dict = Depends(get_current_user)):
         return {"message": "Google Drive disconnected successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to disconnect: {str(e)}")
-
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy"}
 
 if __name__ == "__main__":
     import uvicorn

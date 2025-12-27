@@ -26,19 +26,27 @@ from reportlab.lib.units import inch
 load_dotenv()
 
 # Initialize Firebase Admin SDK
-service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+service_account_info = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
 
 if not firebase_admin._apps:
     try:
-        if service_account_path and os.path.exists(service_account_path):
-            cred = credentials.Certificate(service_account_path)
+        if service_account_info:
+            if service_account_info.startswith('{'):
+                # It's JSON content (for production deployment)
+                cred = credentials.Certificate(json.loads(service_account_info))
+                print("✅ Firebase initialized with service account JSON")
+            elif os.path.exists(service_account_info):
+                # It's a file path (for local development)
+                cred = credentials.Certificate(service_account_info)
+                print("✅ Firebase initialized with service account file")
+            else:
+                raise FileNotFoundError("Service account file not found")
             firebase_admin.initialize_app(cred)
-            print("✅ Firebase initialized with service account file")
         else:
-            raise FileNotFoundError("Service account file not found")
+            raise FileNotFoundError("Service account info not found")
     except Exception as e:
-        print(f"❌ Failed to initialize Firebase with service account file: {e}")
-        print("Please ensure the firebase-service-account.json file is properly downloaded from Firebase Console")
+        print(f"❌ Failed to initialize Firebase with service account: {e}")
+        print("Please ensure the FIREBASE_SERVICE_ACCOUNT_JSON environment variable is set correctly")
         raise e
 
 # Initialize Firestore
@@ -48,7 +56,7 @@ app = FastAPI(title="Docnify API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://your-frontend-domain.web.app"],
+    allow_origins=["http://localhost:5173", "https://docnifyai.web.app"],
     allow_credentials=True,
     allow_methods=["POST", "GET", "DELETE"],
     allow_headers=["*"],

@@ -56,7 +56,7 @@ app = FastAPI(title="Docnify API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://docnifyai.web.app"],
+    allow_origin_func=lambda origin: True,
     allow_credentials=True,
     allow_methods=["POST", "GET", "DELETE"],
     allow_headers=["*"],
@@ -64,7 +64,7 @@ app.add_middleware(
 
 @app.get("/")
 async def read_root():
-    return RedirectResponse(url="/docs")
+    return {"message": "Docnify API is running", "docs": "/docs"}
 
 @app.get("/health")
 async def health_check():

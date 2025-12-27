@@ -64,7 +64,7 @@ app.add_middleware(
 
 @app.get("/")
 async def read_root():
-    return {"message": "Docnify API is running", "docs": "/docs"}
+    return {"message": "Docnify API is running" }
 
 @app.get("/health")
 async def health_check():

@@ -56,7 +56,7 @@ app = FastAPI(title="Docnify API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_func=lambda origin: True,
+    allow_origins=["http://localhost:5173", "https://docnifyai.web.app", "https://docnify-e0j1.onrender.com"],
     allow_credentials=True,
     allow_methods=["POST", "GET", "DELETE"],
     allow_headers=["*"],

@@ -64,7 +64,9 @@ app.add_middleware(
 )
 
 # Mount static files
-app.mount("/", StaticFiles(directory="../frontend/dist", html=True), name="static")
+import os
+if os.path.exists("./static"):
+    app.mount("/", StaticFiles(directory="./static", html=True), name="static")
 
 # API Key Pool Management
 def get_gemini_clients():

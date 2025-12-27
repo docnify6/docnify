@@ -3,9 +3,9 @@ import io
 import json
 import uuid
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header, Request, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header, Request, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
@@ -15,6 +15,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+from google.auth.transport.requests import Request as GoogleRequest
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
 from dotenv import load_dotenv
@@ -122,8 +123,31 @@ user_sessions = {}  # Keep sessions in memory for simplicity
 ip_usage = {}  # ip -> {count, last_reset}
 
 # Google Drive OAuth setup
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
-oauth_states = {}
+SCOPES = [
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "openid"
+]
+
+def store_oauth_state(state: str, user_id: str):
+    db.collection("oauth_states").document(state).set({
+        "user_id": user_id,
+        "created_at": datetime.now(timezone.utc)
+    })
+
+def pop_oauth_state(state: str) -> str | None:
+    ref = db.collection("oauth_states").document(state)
+    doc = ref.get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict()
+    created_at = data.get("created_at")
+    if datetime.now(timezone.utc) - created_at > timedelta(minutes=10):
+        ref.delete()
+        return None
+    user_id = data.get("user_id")
+    ref.delete()
+    return user_id
 
 class DocumentExplanation(BaseModel):
     summary: str
@@ -331,6 +355,12 @@ def get_google_drive_service(user_id: str):
         client_secret=token_data.get("client_secret"),
         scopes=token_data.get("scopes")
     )
+
+    if credentials.expired and credentials.refresh_token:
+        credentials.refresh(GoogleRequest())
+        db.collection("users").document(user_id).update({
+            "google_drive_token.access_token": credentials.token
+        })
 
     return build('drive', 'v3', credentials=credentials)
 
@@ -718,23 +748,27 @@ async def google_auth(user: dict = Depends(get_current_user)):
         redirect_uri=os.getenv("GOOGLE_REDIRECT_URI")
     )
     authorization_url, state = flow.authorization_url(
-        access_type='offline',
-        include_granted_scopes='true'
+        access_type="offline",
+        include_granted_scopes=False,
+        prompt="consent"
     )
-    oauth_states[state] = user["user_id"]
+    store_oauth_state(state, user["user_id"])
     return {"auth_url": authorization_url, "state": state}
 
 @app.get("/auth/google/callback")
-async def google_auth_callback(code: str = None, state: str = None, request: Request = None):
+async def google_auth_callback(
+    request: Request,
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+):
     """Handle Google OAuth callback"""
     if not code or not state:
         return RedirectResponse(url=f"{os.getenv('FRONTEND_URL')}/?google_error=true&reason=missing_parameters")
 
-    user_id = oauth_states.get(state)
+    user_id = pop_oauth_state(state)
     if not user_id:
         return RedirectResponse(url=f"{os.getenv('FRONTEND_URL')}/?google_error=true&reason=invalid_state")
 
-    del oauth_states[state]
 
     try:
         flow = Flow.from_client_config(

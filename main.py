@@ -123,19 +123,7 @@ ip_usage = {}  # ip -> {count, last_reset}
 
 # Google Drive OAuth setup
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
-flow = Flow.from_client_config(
-    {
-        "web": {
-            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
-            "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
-            "redirect_uris": [os.getenv("GOOGLE_REDIRECT_URI")],
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token"
-        }
-    },
-    scopes=SCOPES,
-    redirect_uri=os.getenv("GOOGLE_REDIRECT_URI")
-)
+oauth_states = {}
 
 class DocumentExplanation(BaseModel):
     summary: str
@@ -714,21 +702,54 @@ async def ask_question(question_request: QuestionRequest, user: dict = Depends(g
     return QuestionResponse(**answer)
 
 @app.get("/auth/google")
-async def google_auth():
+async def google_auth(user: dict = Depends(get_current_user)):
     """Initiate Google OAuth flow"""
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+                "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+                "redirect_uris": [os.getenv("GOOGLE_REDIRECT_URI")],
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token"
+            }
+        },
+        scopes=SCOPES,
+        redirect_uri=os.getenv("GOOGLE_REDIRECT_URI")
+    )
     authorization_url, state = flow.authorization_url(
         access_type='offline',
         include_granted_scopes='true'
     )
+    oauth_states[state] = user["user_id"]
     return {"auth_url": authorization_url, "state": state}
 
 @app.get("/auth/google/callback")
-async def google_auth_callback(code: str, state: str, request: Request):
+async def google_auth_callback(code: str = None, state: str = None, request: Request = None):
     """Handle Google OAuth callback"""
-    try:
-        # For now, we'll store the OAuth state and let the frontend handle user association
-        # This avoids authentication issues during the OAuth redirect
+    if not code or not state:
+        return RedirectResponse(url=f"{os.getenv('FRONTEND_URL')}/?google_error=true&reason=missing_parameters")
 
+    user_id = oauth_states.get(state)
+    if not user_id:
+        return RedirectResponse(url=f"{os.getenv('FRONTEND_URL')}/?google_error=true&reason=invalid_state")
+
+    del oauth_states[state]
+
+    try:
+        flow = Flow.from_client_config(
+            {
+                "web": {
+                    "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+                    "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+                    "redirect_uris": [os.getenv("GOOGLE_REDIRECT_URI")],
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token"
+                }
+            },
+            scopes=SCOPES,
+            redirect_uri=os.getenv("GOOGLE_REDIRECT_URI")
+        )
         flow.fetch_token(code=code)
 
         credentials = flow.credentials
@@ -741,19 +762,17 @@ async def google_auth_callback(code: str, state: str, request: Request):
             'scopes': credentials.scopes
         }
 
-        # Store temporary token data that the frontend can access
-        # In a production app, you'd use a more secure method
-        import json
-        import urllib.parse
-        token_json = json.dumps(token_data)
-        encoded_token = urllib.parse.quote(token_json)
+        # Store in Firestore
+        user_ref = db.collection('users').document(user_id)
+        user_ref.set({
+            'google_drive_token': token_data,
+            'google_drive_connected': True,
+            'updated_at': datetime.now()
+        }, merge=True)
 
-        # Redirect with token data (simplified for demo)
-        # In production, use a secure session store
         frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-        redirect_url = f"{frontend_url}?google_oauth_success=true&token_data={encoded_token}"
+        redirect_url = f"{frontend_url}?google_oauth_success=true"
 
-        print(f"Redirecting to: {redirect_url}")
         return RedirectResponse(url=redirect_url, status_code=302)
 
     except Exception as e:

@@ -7,7 +7,8 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import PyPDF2
 import google.genai as genai
@@ -61,6 +62,9 @@ app.add_middleware(
     allow_methods=["POST", "GET", "DELETE"],
     allow_headers=["*"],
 )
+
+# Mount static files
+app.mount("/", StaticFiles(directory="../frontend/dist", html=True), name="static")
 
 # API Key Pool Management
 def get_gemini_clients():
@@ -905,4 +909,5 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

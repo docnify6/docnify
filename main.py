@@ -122,7 +122,7 @@ user_sessions = {}  # Keep sessions in memory for simplicity
 ip_usage = {}  # ip -> {count, last_reset}
 
 # Google Drive OAuth setup
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
+SCOPES = ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/userinfo.email']
 flow = Flow.from_client_config(
     {
         "web": {
@@ -886,9 +886,16 @@ async def drive_status(user: dict = Depends(get_current_user)):
             scopes=token_data.get("scopes")
         )
 
-        service = build('oauth2', 'v2', credentials=credentials)
-        user_info = service.userinfo().get().execute()
-        email = user_info.get('email')
+        # Try to get user email if the token has the required scope
+        email = None
+        if 'https://www.googleapis.com/auth/userinfo.email' in token_data.get("scopes", []):
+            try:
+                service = build('oauth2', 'v2', credentials=credentials)
+                user_info = service.userinfo().get().execute()
+                email = user_info.get('email')
+            except Exception as e:
+                print(f"Could not get user email: {e}")
+                email = None
 
         return {"connected": True, "email": email}
     except Exception as e:

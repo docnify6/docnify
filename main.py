@@ -26,7 +26,7 @@ from reportlab.lib.units import inch
 load_dotenv()
 
 # Initialize Firebase Admin SDK
-service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY_PATH")
+service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
 
 if not firebase_admin._apps:
     try:

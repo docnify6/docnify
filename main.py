@@ -68,6 +68,11 @@ import os
 if os.path.exists("./static"):
     app.mount("/", StaticFiles(directory="./static", html=True), name="static")
 
+@app.get("/")
+async def root():
+    """Redirect to frontend"""
+    return RedirectResponse(url="https://docnifyai.web.app")
+
 # API Key Pool Management
 def get_gemini_clients():
     """Create list of Gemini clients from available API keys"""

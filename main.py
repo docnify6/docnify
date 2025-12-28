@@ -24,7 +24,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.units import inch
-import pytesseract
+from google.cloud import vision
 from PIL import Image
 from pdf2image import convert_from_bytes
 
@@ -569,11 +569,26 @@ def extract_text_from_pdf(pdf_file: UploadFile) -> str:
             images = convert_from_bytes(pdf_content, dpi=200)
             ocr_text = ""
             
+            # Initialize Vision API client
+            client = vision.ImageAnnotatorClient()
+            
             for i, image in enumerate(images):
-                # Extract text from each page image using OCR
-                page_text = pytesseract.image_to_string(image, lang='eng')
-                if page_text.strip():
-                    ocr_text += f"Page {i+1}:\n{page_text}\n\n"
+                # Convert PIL image to bytes
+                img_byte_arr = io.BytesIO()
+                image.save(img_byte_arr, format='PNG')
+                img_byte_arr = img_byte_arr.getvalue()
+                
+                # Create Vision API image object
+                vision_image = vision.Image(content=img_byte_arr)
+                
+                # Perform text detection
+                response = client.text_detection(image=vision_image)
+                texts = response.text_annotations
+                
+                if texts:
+                    page_text = texts[0].description
+                    if page_text.strip():
+                        ocr_text += f"Page {i+1}:\n{page_text}\n\n"
             
             if ocr_text.strip():
                 return ocr_text.strip()

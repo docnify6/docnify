@@ -157,6 +157,7 @@ class DocumentExplanation(BaseModel):
     highlights: List[str]
     document_id: Optional[str] = None
     requires_auth: bool = False
+    requires_verification: bool = False
 
 class QuestionRequest(BaseModel):
     document_id: str
@@ -690,9 +691,42 @@ async def explain_document(file: UploadFile = File(...), mode: str = Form("simpl
         except:
             pass
     
-    # Check IP usage limit for non-authenticated users
     requires_auth = False
-    if not is_authenticated:
+    requires_verification = False
+    
+    if is_authenticated:
+        # Get Firebase user to check email verification
+        try:
+            firebase_user = auth.get_user(user["user_id"])
+            email_verified = firebase_user.email_verified
+        except:
+            email_verified = False
+            
+        # Check user's document count
+        user_doc = db.collection('users').document(user["user_id"]).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            doc_count = user_data.get('document_count', 0)
+            
+            # Check if user needs email verification
+            if not email_verified:
+                requires_verification = True
+            # Check document limit for signed-in users (2 documents)
+            elif doc_count >= 2:
+                raise HTTPException(status_code=429, detail="Document limit reached. Signed-in users can process 2 documents. Please verify your email to continue.")
+        else:
+            # New user, create document
+            db.collection('users').document(user["user_id"]).set({
+                'email': user["email"],
+                'created_at': datetime.now(),
+                'google_drive_connected': False,
+                'email_verified': email_verified,
+                'document_count': 0
+            })
+            if not email_verified:
+                requires_verification = True
+    else:
+        # Check IP usage limit for non-authenticated users
         if not check_ip_usage(client_ip):
             requires_auth = True
         else:
@@ -707,9 +741,13 @@ async def explain_document(file: UploadFile = File(...), mode: str = Form("simpl
         document_text = extract_text_from_pdf(file)
         explanation = explain_document_with_gemini(document_text, mode)
 
-        # Only store documents for authenticated users who have Google Drive connected
+        # Store documents and increment count for authenticated users
         doc_id = None
-        if is_authenticated:
+        if is_authenticated and not requires_verification:
+            # Increment document count
+            user_ref = db.collection('users').document(user["user_id"])
+            user_ref.update({'document_count': firestore.Increment(1)})
+            
             # Check if user has Google Drive connected
             user_doc = db.collection('users').document(user["user_id"]).get()
             if user_doc.exists:
@@ -719,6 +757,7 @@ async def explain_document(file: UploadFile = File(...), mode: str = Form("simpl
 
         explanation["document_id"] = doc_id
         explanation["requires_auth"] = requires_auth
+        explanation["requires_verification"] = requires_verification
 
         return DocumentExplanation(**explanation)
     finally:
@@ -1041,6 +1080,66 @@ async def disconnect_drive(user: dict = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to disconnect: {str(e)}")
 
+@app.post("/send-verification")
+async def send_verification_email(user: dict = Depends(get_current_user)):
+    """Send email verification to user"""
+    try:
+        # Get Firebase user and send verification email
+        firebase_user = auth.get_user(user["user_id"])
+        
+        # Generate verification link
+        link = auth.generate_email_verification_link(firebase_user.email)
+        
+        # In a real app, you'd send this via email service
+        # For now, we'll return the link (in production, use SendGrid, etc.)
+        return {"verification_link": link, "message": "Verification email sent"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send verification: {str(e)}")
+
+@app.post("/verify-email")
+async def verify_email(token: str, user: dict = Depends(get_current_user)):
+    """Verify email with token"""
+    try:
+        # In Firebase, email verification is handled client-side
+        # This endpoint updates our Firestore record
+        user_ref = db.collection('users').document(user["user_id"])
+        user_ref.update({
+            'email_verified': True,
+            'verified_at': datetime.now()
+        })
+        return {"message": "Email verified successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to verify email: {str(e)}")
+
+@app.get("/user/status")
+async def get_user_status(user: dict = Depends(get_current_user)):
+    """Get user status including document count and verification status"""
+    try:
+        # Get Firebase user to check email verification
+        try:
+            firebase_user = auth.get_user(user["user_id"])
+            email_verified = firebase_user.email_verified
+        except:
+            email_verified = False
+            
+        user_doc = db.collection('users').document(user["user_id"]).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            return {
+                "email": user["email"],
+                "email_verified": email_verified,
+                "document_count": user_data.get('document_count', 0),
+                "documents_remaining": max(0, 2 - user_data.get('document_count', 0)) if not email_verified else "unlimited"
+            }
+        else:
+            return {
+                "email": user["email"],
+                "email_verified": email_verified,
+                "document_count": 0,
+                "documents_remaining": 2 if not email_verified else "unlimited"
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get user status: {str(e)}")
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))

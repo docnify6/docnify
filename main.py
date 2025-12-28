@@ -813,20 +813,38 @@ async def google_auth_callback(
         print(f"Google OAuth callback error: {e}")
         return RedirectResponse(url=f"{os.getenv('FRONTEND_URL')}/?google_error=true")
 
-@app.get("/user/files")
-async def get_user_files(user: dict = Depends(get_current_user)):
-    """Get user's stored files"""
-    user_files = []
-    for doc_id, doc in document_store.items():
-        if doc["user_id"] == user["user_id"]:
-            expires_at = doc["expires_at"].isoformat() if doc["expires_at"] else None
-            user_files.append({
-                "id": doc_id,
-                "filename": f"document_{doc_id[:8]}.pdf",
-                "expires_at": expires_at,
-                "has_pdf": "pdf_content" in doc and doc["pdf_content"] is not None
+@app.get("/drive/files")
+async def get_drive_files(user: dict = Depends(get_current_user)):
+    """Get all files from Google Drive Docnify folder"""
+    try:
+        service = get_google_drive_service(user["user_id"])
+        folder_id = get_or_create_docnify_folder(service)
+        
+        # Get all files in Docnify folder
+        query = f"'{folder_id}' in parents and trashed = false"
+        results = service.files().list(
+            q=query,
+            fields='files(id, name, createdTime, size, mimeType)',
+            orderBy='createdTime desc'
+        ).execute()
+        
+        files = results.get('files', [])
+        drive_files = []
+        
+        for file in files:
+            drive_files.append({
+                "id": file['id'],
+                "name": file['name'],
+                "created_at": file['createdTime'],
+                "size": file.get('size', '0'),
+                "mime_type": file.get('mimeType', 'unknown'),
+                "source": "google_drive"
             })
-    return {"files": user_files}
+        
+        return {"files": drive_files}
+    except Exception as e:
+        print(f"Error getting drive files: {e}")
+        return {"files": []}
 
 @app.get("/temp/files")
 async def get_temp_files():
@@ -860,27 +878,15 @@ async def download_file(doc_id: str, authorization: str = Header(None)):
     pdf_content = get_document_pdf(doc_id, user_id)
     return Response(content=pdf_content, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=document_{doc_id[:8]}.pdf"})
 
-@app.delete("/delete/{doc_id}")
-async def delete_file(doc_id: str, user: dict = Depends(get_current_user)):
-    """Delete stored document and from Google Drive if exists"""
-    if doc_id not in document_store:
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    doc = document_store[doc_id]
-    if doc["user_id"] != user["user_id"]:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    # Delete from Google Drive if file exists
-    if doc.get("drive_file_id"):
-        try:
-            service = get_google_drive_service(user["user_id"])
-            service.files().delete(fileId=doc["drive_file_id"]).execute()
-        except Exception as e:
-            print(f"Failed to delete from Google Drive: {e}")
-            # Continue with local deletion even if Drive deletion fails
-
-    del document_store[doc_id]
-    return {"message": "Document deleted successfully"}
+@app.delete("/drive/files/{file_id}")
+async def delete_drive_file(file_id: str, user: dict = Depends(get_current_user)):
+    """Delete file from Google Drive"""
+    try:
+        service = get_google_drive_service(user["user_id"])
+        service.files().delete(fileId=file_id).execute()
+        return {"message": "File deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
 
 @app.post("/save-to-drive/{doc_id}")
 async def save_to_drive(doc_id: str, user: dict = Depends(get_current_user)):

@@ -805,9 +805,82 @@ async def google_auth_callback(
         }, merge=True)
 
         frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-        redirect_url = f"{frontend_url}?google_oauth_success=true"
-
-        return RedirectResponse(url=redirect_url, status_code=302)
+        
+        # Return HTML page that shows success and closes tab after 2 seconds
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Google Drive Connected</title>
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    min-height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    text-align: center;
+                }}
+                .container {{
+                    max-width: 400px;
+                    padding: 40px;
+                }}
+                .success-icon {{
+                    font-size: 4rem;
+                    margin-bottom: 20px;
+                }}
+                h1 {{
+                    font-size: 2rem;
+                    margin-bottom: 10px;
+                }}
+                p {{
+                    font-size: 1.1rem;
+                    opacity: 0.9;
+                    margin-bottom: 20px;
+                }}
+                .countdown {{
+                    font-size: 1.2rem;
+                    font-weight: bold;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="success-icon">✅</div>
+                <h1>Google Drive Connected!</h1>
+                <p>Your Google account has been successfully linked to Docnify.</p>
+                <p class="countdown">This tab will close in <span id="timer">2</span> seconds...</p>
+            </div>
+            <script>
+                let countdown = 2;
+                const timer = document.getElementById('timer');
+                
+                const interval = setInterval(() => {{
+                    countdown--;
+                    timer.textContent = countdown;
+                    
+                    if (countdown <= 0) {{
+                        clearInterval(interval);
+                        window.close();
+                    }}
+                }}, 1000);
+                
+                // Also try to notify parent window if it exists
+                if (window.opener) {{
+                    window.opener.postMessage({{
+                        type: 'google-drive-connected',
+                        success: true
+                    }}, '{frontend_url}');
+                }}
+            </script>
+        </body>
+        </html>
+        """
+        
+        return Response(content=html_content, media_type="text/html")
 
     except Exception as e:
         print(f"Google OAuth callback error: {e}")

@@ -23,6 +23,9 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.units import inch
+import pytesseract
+from PIL import Image
+from pdf2image import convert_from_bytes
 
 load_dotenv()
 
@@ -535,7 +538,7 @@ def upload_pdf_to_drive(user_id: str, pdf_content: bytes, filename: str) -> str:
         raise HTTPException(status_code=500, detail=f"Google Drive upload failed: {str(e)}")
 
 def extract_text_from_pdf(pdf_file: UploadFile) -> str:
-    """Extract text from PDF file in memory"""
+    """Extract text from PDF file with OCR fallback for images"""
     try:
         pdf_file.file.seek(0)
         pdf_content = pdf_file.file.read()
@@ -543,21 +546,49 @@ def extract_text_from_pdf(pdf_file: UploadFile) -> str:
         if not pdf_content:
             raise HTTPException(status_code=400, detail="Empty PDF file")
         
-        pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_content))
+        # First try regular text extraction
+        try:
+            pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_content))
+            text = ""
+            for page in pdf_reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+            
+            # If we got meaningful text, return it
+            if text.strip() and len(text.strip()) > 50:
+                return text.strip()
+        except Exception as e:
+            print(f"Regular PDF text extraction failed: {e}")
         
-        text = ""
-        for page in pdf_reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
+        # If regular extraction failed or returned minimal text, try OCR
+        print("Attempting OCR extraction...")
+        try:
+            # Convert PDF to images
+            images = convert_from_bytes(pdf_content, dpi=300)
+            ocr_text = ""
+            
+            for i, image in enumerate(images):
+                # Extract text from each page image using OCR
+                page_text = pytesseract.image_to_string(image, lang='eng')
+                if page_text.strip():
+                    ocr_text += f"Page {i+1}:\n{page_text}\n\n"
+            
+            if ocr_text.strip():
+                return ocr_text.strip()
+            else:
+                raise HTTPException(status_code=400, detail="Could not extract any text from PDF. The document may be empty or contain unsupported content.")
+                
+        except Exception as ocr_error:
+            print(f"OCR extraction failed: {ocr_error}")
+            raise HTTPException(status_code=400, detail="Could not extract text from PDF. This may be a scanned document or contain images that couldn't be processed.")
         
-        if not text.strip():
-            raise HTTPException(status_code=400, detail="Could not extract text from PDF")
-        
-        return text.strip()
     except PyPDF2.errors.PdfReadError:
-        raise HTTPException(status_code=400, detail="Invalid PDF file")
+        raise HTTPException(status_code=400, detail="Invalid or corrupted PDF file")
+    except HTTPException:
+        raise
     except Exception as e:
+        print(f"PDF processing error: {e}")
         raise HTTPException(status_code=400, detail=f"Error processing PDF: {str(e)}")
 
 def explain_document_with_gemini(text: str, mode: str = "simple") -> Dict:
@@ -1140,6 +1171,17 @@ async def get_user_status(user: dict = Depends(get_current_user)):
             }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get user status: {str(e)}")
+
+@app.post("/check-email")
+async def check_email_exists(email: str = Form(...)):
+    """Check if email exists in Firebase"""
+    try:
+        auth.get_user_by_email(email)
+        return {"exists": True}
+    except auth.UserNotFoundError:
+        return {"exists": False}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error checking email: {str(e)}")
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))

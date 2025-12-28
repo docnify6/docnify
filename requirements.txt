@@ -10,6 +10,6 @@ firebase-admin==6.2.0
 python-dotenv
 pydantic
 reportlab==4.0.7
-pytesseract==0.3.10
+pytesseract
 Pillow==10.1.0
 pdf2image==1.16.3

@@ -3,6 +3,7 @@ import io
 import json
 import uuid
 import hashlib
+import shutil
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header, Request, Form, Query
@@ -565,7 +566,7 @@ def extract_text_from_pdf(pdf_file: UploadFile) -> str:
         print("Attempting OCR extraction...")
         try:
             # Convert PDF to images
-            images = convert_from_bytes(pdf_content, dpi=300)
+            images = convert_from_bytes(pdf_content, dpi=200)
             ocr_text = ""
             
             for i, image in enumerate(images):
@@ -577,11 +578,11 @@ def extract_text_from_pdf(pdf_file: UploadFile) -> str:
             if ocr_text.strip():
                 return ocr_text.strip()
             else:
-                raise HTTPException(status_code=400, detail="Could not extract any text from PDF. The document may be empty or contain unsupported content.")
+                raise HTTPException(status_code=400, detail="Could not extract any text from this PDF. The document may be empty or contain unsupported content.")
                 
         except Exception as ocr_error:
             print(f"OCR extraction failed: {ocr_error}")
-            raise HTTPException(status_code=400, detail="Could not extract text from PDF. This may be a scanned document or contain images that couldn't be processed.")
+            raise HTTPException(status_code=400, detail="Could not process this PDF. Please try a different document.")
         
     except PyPDF2.errors.PdfReadError:
         raise HTTPException(status_code=400, detail="Invalid or corrupted PDF file")
